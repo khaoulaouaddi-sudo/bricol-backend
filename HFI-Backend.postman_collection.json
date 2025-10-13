@@ -1,0 +1,385 @@
+{
+  "info": {
+    "name": "HFI Backend API - Tests",
+    "_postman_id": "1b7b2c14-0000-4000-9000-hfi-tests",
+    "description": "Tests principaux pour HFI Backend (Auth, Ads, Messages, Reviews, Worker Profiles/Photos)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login Admin",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/auth/login", "host": ["{{base_url}}"], "path": ["auth", "login"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{admin_email}}\",\n  \"password\": \"{{admin_password}}\"\n}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.expect(json).to.have.property('token');",
+                  "pm.environment.set('token_admin', json.token);",
+                  "// Si la réponse retourne l'utilisateur, on capture l'id",
+                  "if (json.user && json.user.id) pm.environment.set('admin_id', json.user.id);",
+                  "// Par défaut, la variable token générale = token_admin",
+                  "pm.environment.set('token', json.token);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login Worker",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/auth/login", "host": ["{{base_url}}"], "path": ["auth", "login"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{worker_email}}\",\n  \"password\": \"{{worker_password}}\"\n}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.expect(json).to.have.property('token');",
+                  "pm.environment.set('token_worker', json.token);",
+                  "if (json.user && json.user.id) pm.environment.set('worker_id', json.user.id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Ads",
+      "item": [
+        {
+          "name": "GET /ads/search (q=plombier)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/ads/search?q=plombier&type=service&page=1&limit=10&sort_by=created_at&sort_dir=desc",
+              "host": ["{{base_url}}"],
+              "path": ["ads", "search"],
+              "query": [
+                { "key": "q", "value": "plombier" },
+                { "key": "type", "value": "service" },
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "10" },
+                { "key": "sort_by", "value": "created_at" },
+                { "key": "sort_dir", "value": "desc" }
+              ]
+            }
+          },
+          "response": [],
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('status 200', () => pm.response.to.have.status(200));"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "POST /ads (admin token)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token_admin}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/ads", "host": ["{{base_url}}"], "path": ["ads"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\":\"Plombier Expert Temara\",\n  \"description\":\"Fuites, débouchage, 24/7\",\n  \"price\":300,\n  \"type\":\"service\",\n  \"location\":\"Temara\"\n}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "pm.expect(json).to.have.property('id');",
+                  "pm.environment.set('ad_id', json.id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /ads (list)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/ads?page=1&limit=10", "host": ["{{base_url}}"], "path": ["ads"], "query": [{ "key": "page", "value": "1" }, { "key": "limit", "value": "10" }] }
+          },
+          "response": [],
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('status 200', () => pm.response.to.have.status(200));"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "GET /ads/:id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/ads/{{ad_id}}", "host": ["{{base_url}}"], "path": ["ads", "{{ad_id}}"] }
+          },
+          "response": [],
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('status 200', () => pm.response.to.have.status(200));"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "PUT /ads/:id (admin token)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token_admin}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/ads/{{ad_id}}", "host": ["{{base_url}}"], "path": ["ads", "{{ad_id}}"] },
+            "body": { "mode": "raw", "raw": "{\n  \"price\": 350,\n  \"title\": \"Plombier Expert Temara+\"\n}" }
+          },
+          "response": [],
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('status 200', () => pm.response.to.have.status(200));"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "DELETE /ads/:id (admin token)",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token_admin}}" }],
+            "url": { "raw": "{{base_url}}/ads/{{ad_id}}", "host": ["{{base_url}}"], "path": ["ads", "{{ad_id}}"] }
+          },
+          "response": [],
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('status 200', () => pm.response.to.have.status(200));"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "GET /ads/user/:userId",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/ads/user/{{worker_id}}?page=1&limit=10", "host": ["{{base_url}}"], "path": ["ads", "user", "{{worker_id}}"], "query": [{ "key": "page", "value": "1" }, { "key": "limit", "value": "10" }] }
+          },
+          "response": [],
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('status 200', () => pm.response.to.have.status(200));"], "type": "text/javascript" } }]
+        }
+      ]
+    },
+    {
+      "name": "Messages",
+      "item": [
+        {
+          "name": "POST /messages (worker -> admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token_worker}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/messages", "host": ["{{base_url}}"], "path": ["messages"] },
+            "body": { "mode": "raw", "raw": "{\n  \"receiver_id\": {{admin_id}},\n  \"content\": \"Bonjour, dispo pour un chantier ?\"\n}" }
+          },
+          "response": [],
+          "event": [
+            { "listen": "test", "script": { "exec": [
+              "pm.test('status 201', () => pm.response.to.have.status(201));",
+              "const json = pm.response.json();",
+              "pm.expect(json).to.have.property('id');",
+              "pm.environment.set('message_id', json.id);"
+            ], "type": "text/javascript" } }
+          ]
+        },
+        {
+          "name": "POST /messages (self-message bloqué)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token_worker}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/messages", "host": ["{{base_url}}"], "path": ["messages"] },
+            "body": { "mode": "raw", "raw": "{\n  \"receiver_id\": {{worker_id}},\n  \"content\": \"test auto-message\"\n}" }
+          },
+          "response": [],
+          "event": [
+            { "listen": "test", "script": { "exec": [
+              "pm.test('status 400 (self-message)', () => pm.response.to.have.status(400));"
+            ], "type": "text/javascript" } }
+          ]
+        },
+        {
+          "name": "GET /messages (list)",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/messages", "host": ["{{base_url}}"], "path": ["messages"] } },
+          "response": [],
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('status 200', () => pm.response.to.have.status(200));"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "DELETE /messages/:id (ownership/admin)",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token_worker}}" }],
+            "url": { "raw": "{{base_url}}/messages/{{message_id}}", "host": ["{{base_url}}"], "path": ["messages", "{{message_id}}"] }
+          },
+          "response": [],
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('status 200', () => pm.response.to.have.status(200));"], "type": "text/javascript" } }]
+        }
+      ]
+    },
+    {
+      "name": "Reviews",
+      "item": [
+        {
+          "name": "POST /reviews (admin -> worker)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token_admin}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/reviews", "host": ["{{base_url}}"], "path": ["reviews"] },
+            "body": { "mode": "raw", "raw": "{\n  \"target_user_id\": {{worker_id}},\n  \"rating\": 5,\n  \"comment\": \"Très pro !\"\n}" }
+          },
+          "response": [],
+          "event": [
+            { "listen": "test", "script": { "exec": [
+              "pm.test('status 201', () => pm.response.to.have.status(201));",
+              "const json = pm.response.json();",
+              "pm.expect(json).to.have.property('id');",
+              "pm.environment.set('review_id', json.id);"
+            ], "type": "text/javascript" } }
+          ]
+        },
+        {
+          "name": "POST /reviews (dup attendu 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token_admin}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/reviews", "host": ["{{base_url}}"], "path": ["reviews"] },
+            "body": { "mode": "raw", "raw": "{\n  \"target_user_id\": {{worker_id}},\n  \"rating\": 4,\n  \"comment\": \"doublon\"\n}" }
+          },
+          "response": [],
+          "event": [
+            { "listen": "test", "script": { "exec": [
+              "pm.test('status 400 duplicate', () => pm.response.to.have.status(400));"
+            ], "type": "text/javascript" } }
+          ]
+        },
+        {
+          "name": "PUT /reviews/:id",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token_admin}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/reviews/{{review_id}}", "host": ["{{base_url}}"], "path": ["reviews", "{{review_id}}"] },
+            "body": { "mode": "raw", "raw": "{\n  \"comment\": \"Très pro et ponctuel !\"\n}" }
+          },
+          "response": [],
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('status 200', () => pm.response.to.have.status(200));"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "DELETE /reviews/:id",
+          "request": { "method": "DELETE", "header": [{ "key": "Authorization", "value": "Bearer {{token_admin}}" }], "url": { "raw": "{{base_url}}/reviews/{{review_id}}", "host": ["{{base_url}}"], "path": ["reviews", "{{review_id}}"] } },
+          "response": [],
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('status 200', () => pm.response.to.have.status(200));"], "type": "text/javascript" } }]
+        }
+      ]
+    },
+    {
+      "name": "Worker Profiles & Photos",
+      "item": [
+        {
+          "name": "POST /worker-profiles (worker)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token_worker}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/worker-profiles", "host": ["{{base_url}}"], "path": ["worker-profiles"] },
+            "body": { "mode": "raw", "raw": "{\n  \"user_id\": {{worker_id}},\n  \"title\": \"Plombier certifié\",\n  \"description\": \"Interventions Temara/Rabat\",\n  \"location\": \"Temara\",\n  \"available\": true,\n  \"verification_status\": \"non_verifie\",\n  \"trust_badge\": false\n}" }
+          },
+          "response": [],
+          "event": [
+            { "listen": "test", "script": { "exec": [
+              "pm.test('status 201', () => pm.response.to.have.status(201));",
+              "const json = pm.response.json();",
+              "pm.expect(json).to.have.property('id');",
+              "pm.environment.set('worker_profile_id', json.id);"
+            ], "type": "text/javascript" } }
+          ]
+        },
+        {
+          "name": "GET /worker-photos/profile/:profileId",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/worker-photos/profile/{{worker_profile_id}}", "host": ["{{base_url}}"], "path": ["worker-photos", "profile", "{{worker_profile_id}}"] } },
+          "response": [],
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('status 200', () => pm.response.to.have.status(200));"], "type": "text/javascript" } }]
+        },
+        {
+          "name": "POST /worker-photos (worker)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token_worker}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/worker-photos", "host": ["{{base_url}}"], "path": ["worker-photos"] },
+            "body": { "mode": "raw", "raw": "{\n  \"profile_id\": {{worker_profile_id}},\n  \"image_url\": \"https://example.com/p1.jpg\"\n}" }
+          },
+          "response": [],
+          "event": [
+            { "listen": "test", "script": { "exec": [
+              "pm.test('status 201', () => pm.response.to.have.status(201));",
+              "const json = pm.response.json();",
+              "pm.expect(json).to.have.property('id');",
+              "pm.environment.set('worker_photo_id', json.id);"
+            ], "type": "text/javascript" } }
+          ]
+        },
+        {
+          "name": "DELETE /worker-photos/:id (owner/admin)",
+          "request": { "method": "DELETE", "header": [{ "key": "Authorization", "value": "Bearer {{token_worker}}" }], "url": { "raw": "{{base_url}}/worker-photos/{{worker_photo_id}}", "host": ["{{base_url}}"], "path": ["worker-photos", "{{worker_photo_id}}"] } },
+          "response": [],
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('status 200', () => pm.response.to.have.status(200));"], "type": "text/javascript" } }]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    { "key": "base_url", "value": "http://127.0.0.1:3000" },
+    { "key": "token", "value": "" },
+    { "key": "token_admin", "value": "" },
+    { "key": "token_worker", "value": "" },
+    { "key": "admin_email", "value": "admin@test.com" },
+    { "key": "admin_password", "value": "Password123!" },
+    { "key": "worker_email", "value": "worker@test.com" },
+    { "key": "worker_password", "value": "Password123!" },
+    { "key": "admin_id", "value": "7" },
+    { "key": "worker_id", "value": "6" },
+    { "key": "ad_id", "value": "" },
+    { "key": "message_id", "value": "" },
+    { "key": "review_id", "value": "" },
+    { "key": "worker_profile_id", "value": "" },
+    { "key": "worker_photo_id", "value": "" }
+  ]
+}
