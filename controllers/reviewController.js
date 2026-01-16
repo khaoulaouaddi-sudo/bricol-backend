@@ -1,102 +1,120 @@
 // controllers/reviewController.js
-const pool = require("../db");
 const Review = require("../models/reviewModel");
 
 const ReviewController = {
-  async getAll(req, res) {
+  async getByWorkerProfile(req, res) {
     try {
-      const r = await Review.getAll();
-      res.json(r);
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: "Erreur serveur" });
-    }
-  },
-
-  async getById(req, res) {
-    try {
-      const r = await Review.getById(req.params.id);
-      if (!r) return res.status(404).json({ msg: "Review not found" });
-      res.json(r);
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: "Erreur serveur" });
-    }
-  },
-
-  async getByReviewer(req, res) {
-    try {
-      const rows = await Review.getByReviewer(req.params.reviewerId);
+      const workerProfileId = Number(req.params.workerProfileId);
+      const rows = await Review.getByWorkerProfile(workerProfileId);
       res.json(rows);
     } catch (err) {
       console.error(err);
-      res.status(500).json({ error: "Erreur serveur" });
+      res.status(500).json({ msg: "Erreur serveur" });
     }
   },
 
-  async getByTargetUser(req, res) {
+  async getByCompanyProfile(req, res) {
     try {
-      const rows = await Review.getByTargetUser(req.params.targetUserId || req.params.id);
+      const companyProfileId = Number(req.params.companyProfileId);
+      const rows = await Review.getByCompanyProfile(companyProfileId);
       res.json(rows);
     } catch (err) {
       console.error(err);
-      res.status(500).json({ error: "Erreur serveur" });
+      res.status(500).json({ msg: "Erreur serveur" });
     }
   },
 
-  // IMPORTANT : propriété d'objet (pas "function create(...)") + pool importé
-  async create(req, res, next) {
+  async getMineForWorkerProfile(req, res) {
     try {
-      // Ces champs ont été nettoyés par validateReviewCreate (middleware)
-      const { reviewer_id, target_user_id, rating, comment } = req.body || {};
-
-      // Ceinture + bretelles : on recheck l'auto-review
-      if (reviewer_id === target_user_id) {
-        return res.status(400).json({ msg: "Impossible de laisser un avis sur vous-même" });
-      }
-
-      // Vérifier que la cible existe
-      const { rows: u } = await pool.query(`SELECT 1 FROM users WHERE id = $1`, [target_user_id]);
-      if (!u.length) return res.status(404).json({ msg: "Utilisateur cible introuvable" });
-
-      // Insérer la review
-      const { rows } = await pool.query(
-        `INSERT INTO reviews (reviewer_id, target_user_id, rating, comment)
-         VALUES ($1,$2,$3,$4)
-         RETURNING id, reviewer_id, target_user_id, rating, comment, created_at, updated_at`,
-        [reviewer_id, target_user_id, rating, comment]
-      );
-
-      return res.status(201).json(rows[0]);
+      const reviewerId = req.user?.id;
+      const workerProfileId = Number(req.params.workerProfileId);
+      const review = await Review.getMineForWorkerProfile(workerProfileId, reviewerId);
+      res.json({ review });
     } catch (err) {
-      // Laisse le middleware d'erreurs SQL (checkUniqueReview/sqlDuplicateReviewHandler) formater les 23505/23514
+      console.error(err);
+      res.status(500).json({ msg: "Erreur serveur" });
+    }
+  },
+
+  async getMineForCompanyProfile(req, res) {
+    try {
+      const reviewerId = req.user?.id;
+      const companyProfileId = Number(req.params.companyProfileId);
+      const review = await Review.getMineForCompanyProfile(companyProfileId, reviewerId);
+      res.json({ review });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ msg: "Erreur serveur" });
+    }
+  },
+
+  // ✅ NEW: all reviews written by current user (for /history)
+  async getMine(req, res) {
+    try {
+      const reviewerId = req.user?.id;
+      const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
+      const offset = Math.max(Number(req.query.offset) || 0, 0);
+
+      const items = await Review.getMineByReviewer(reviewerId, { limit, offset });
+      res.json({ items, meta: { limit, offset, count: items.length } });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ msg: "Erreur serveur" });
+    }
+  },
+
+  async createForWorkerProfile(req, res, next) {
+    try {
+      const { reviewer_id, target_worker_profile_id, rating, comment } = req.body || {};
+      const created = await Review.createForWorkerProfile({
+        reviewer_id,
+        target_worker_profile_id,
+        rating,
+        comment,
+      });
+      return res.status(201).json(created);
+    } catch (err) {
       return next(err);
     }
   },
 
-  async delete(req, res) {
+  async createForCompanyProfile(req, res, next) {
     try {
-      const d = await Review.delete(req.params.id);
-      if (!d) return res.status(404).json({ msg: "Review not found" });
-      res.json({ msg: "Review deleted" });
+      const { reviewer_id, target_company_profile_id, rating, comment } = req.body || {};
+      const created = await Review.createForCompanyProfile({
+        reviewer_id,
+        target_company_profile_id,
+        rating,
+        comment,
+      });
+      return res.status(201).json(created);
     } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: "Erreur serveur" });
+      return next(err);
     }
   },
 
   async update(req, res) {
     try {
-      const { rating, comment } = req.body;
-      if (rating === undefined && !comment) {
-        return res.status(400).json({ msg: "Au moins rating ou comment requis" });
-      }
-      const updated = await Review.update(req.params.id, { rating, comment });
-      if (!updated) return res.status(404).json({ msg: "Review not found" });
+      const id = Number(req.params.id);
+      const rating = req.body?.rating;
+      const comment = req.body?.comment;
+
+      const updated = await Review.update(id, { rating, comment });
       res.json(updated);
     } catch (err) {
       console.error(err);
-      res.status(500).json({ error: "Erreur serveur" });
+      res.status(500).json({ msg: "Erreur serveur" });
+    }
+  },
+
+  async delete(req, res) {
+    try {
+      const id = Number(req.params.id);
+      await Review.delete(id);
+      res.json({ ok: true });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ msg: "Erreur serveur" });
     }
   },
 };

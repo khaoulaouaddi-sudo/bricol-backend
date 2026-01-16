@@ -1,3 +1,4 @@
+// models/companyProfileModel.js
 const pool = require("../db");
 
 const CompanyProfileModel = {
@@ -14,7 +15,36 @@ const CompanyProfileModel = {
 
   async getById(id) {
     const q = `
-      SELECT cp.*, u.name AS user_name, u.email
+      SELECT
+        cp.*,
+        u.name AS user_name,
+        u.email,
+        -- Ville en JSON (si la colonne city_id existe et est renseignée)
+        (
+          SELECT jsonb_build_object(
+            'id', c.id,
+            'slug', c.slug,
+            'name_fr', c.name_fr
+          )
+          FROM cities c
+          WHERE c.id = cp.city_id
+        ) AS city,
+        -- Sectors en tableau JSON
+        COALESCE(
+          (
+            SELECT jsonb_agg(
+              jsonb_build_object(
+                'id', s.id,
+                'slug', s.slug,
+                'name', s.name
+              )
+            )
+            FROM company_sectors cs
+            JOIN sectors s ON s.id = cs.sector_id
+            WHERE cs.company_id = cp.id
+          ),
+          '[]'::jsonb
+        ) AS sectors
       FROM company_profiles cp
       JOIN users u ON cp.user_id = u.id
       WHERE cp.id = $1;
@@ -23,6 +53,7 @@ const CompanyProfileModel = {
     return rows[0];
   },
 
+  // create: utilisé pour d'autres usages éventuels (ici la création est faite dans le controller via client transactionnel)
   async create({ user_id, name, description, sector_main, location, website, phone, email }) {
     const q = `
       INSERT INTO company_profiles (user_id, name, description, sector_main, location, website, phone, email)

@@ -7,14 +7,16 @@ const { body, param } = require("express-validator");
 const validate = require("../middleware/validate");
 
 // Liste par company
-router.get("/company/:companyId",
-  [ param("companyId").isInt({ min: 1 }).withMessage("companyId invalide") ],
+router.get(
+  "/company/:companyId",
+  [param("companyId").isInt({ min: 1 }).withMessage("companyId invalide")],
   validate,
   PC.getAllByCompany
 );
 
 // Création (company owner)
-router.post("/",
+router.post(
+  "/",
   auth,
   checkRole("company"),
   ensureCompanyPhotoOwner,
@@ -26,19 +28,36 @@ router.post("/",
       .isURL({ protocols: ["http","https"], require_protocol: true, allow_underscores: true })
       .withMessage("image_url doit être une URL http(s)")
       .bail()
-      // accepte .jpg .jpeg .png .webp (+ query string éventuelle)
       .matches(/\.(?:png|jpe?g|webp)(?:\?.*)?$/i).withMessage("image_url doit se terminer par .png/.jpg/.jpeg/.webp"),
+    body("caption").optional({ nullable: true }).isString().trim().isLength({ max: 300 }).withMessage("caption trop longue"),
+    body("is_cover").optional().isBoolean().withMessage("is_cover doit être boolean"),
   ],
   validate,
   PC.create
 );
 
-// Suppression (owner ou admin)
-router.delete("/:id",
+// PATCH (owner ou admin) : modifier caption / set cover
+router.patch(
+  "/:id",
   auth,
-  checkRole("company","admin"),
+  checkRole("company", "admin"),
   ensureCompanyPhotoOwner,
-  [ param("id").isInt({ min: 1 }).withMessage("id invalide") ],
+  [
+    param("id").isInt({ min: 1 }).withMessage("id invalide"),
+    body("caption").optional({ nullable: true }).isString().trim().isLength({ max: 300 }).withMessage("caption trop longue"),
+    body("is_cover").optional().isBoolean().withMessage("is_cover doit être boolean"),
+  ],
+  validate,
+  PC.patch
+);
+
+// Suppression (owner ou admin)
+router.delete(
+  "/:id",
+  auth,
+  checkRole("company", "admin"),
+  ensureCompanyPhotoOwner,
+  [param("id").isInt({ min: 1 }).withMessage("id invalide")],
   validate,
   PC.delete
 );

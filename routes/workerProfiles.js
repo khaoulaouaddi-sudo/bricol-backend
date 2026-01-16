@@ -2,17 +2,30 @@
 const express = require("express");
 const router = express.Router();
 const WPC = require("../controllers/workerProfileController");
-const { auth, checkRole, ensureWorkerProfileOwner } = require("../middleware/authMiddleware");
+const WPhoto = require("../controllers/workerPhotoController");
+const { auth, checkRole, ensureWorkerProfileOwner,ensureWorkerPhotoOwner} = require("../middleware/authMiddleware");
+const { limitWorkerPhotos } = require("../middleware/photoMiddleware"); // <-- AJOUT OBLIGATOIRE
+
 
 router.get("/", WPC.getAll);
-router.get("/:id", WPC.getById);
 
-router.post("/", auth, checkRole("worker", "admin"), ensureWorkerProfileOwner, WPC.create);
+router.get("/search", WPC.search);
+router.get("/:id", WPC.getById);
+//router.post("/", auth, checkRole("worker", "admin"), ensureWorkerProfileOwner, WPC.create);
+router.post("/", auth, checkRole("worker", "admin","visitor"), WPC.create);
 router.put("/:id", auth, checkRole("worker", "admin"), ensureWorkerProfileOwner, WPC.update);
 router.delete("/:id", auth, checkRole("worker", "admin"), ensureWorkerProfileOwner, WPC.delete);
 
 // relations
 router.get("/:id/photos", WPC.getPhotos);
 router.get("/:id/reviews", WPC.getReviews);
+router.post(
+  "/:id/photos",
+  auth,
+  checkRole("worker", "admin","visitor"),
+  ensureWorkerPhotoOwner,
+  limitWorkerPhotos,      // <-- IMPORTANT : limite de photos
+  WPhoto.create           // <-- accepte une LISTE
+);
 
 module.exports = router;

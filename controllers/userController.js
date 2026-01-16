@@ -129,7 +129,71 @@ async update(req, res) {
       const profiles = await User.getProfilesByUser(req.params.id);
       res.json(profiles);
     } catch (err) { console.error(err); res.status(500).json({ error: "Erreur serveur" }); }
+  },
+
+// +AJOUT — retourne l'utilisateur courant via l'access token (JWT)
+   async getMe(req, res) {
+    try {
+      const userId = req.user?.id; // injecté par le middleware auth
+      if (!userId) return res.status(401).json({ msg: "Non authentifié" });
+
+      const me = await User.getById(userId); // réutilise ton modèle
+      if (!me) return res.status(404).json({ msg: "Utilisateur introuvable" });
+
+      return res.json(me);
+    } catch (e) {
+      console.error("GET /users/me error:", e);
+      return res.status(500).json({ msg: "Erreur serveur" });
+    }
+  },
+async getMyProfiles(req, res) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ msg: "Non authentifié" });
+
+    const profiles = await User.getProfilesByUser(userId);
+    return res.json(profiles);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ msg: "Erreur serveur" });
   }
+},
+
+async updateMe(req, res) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ msg: "Non authentifié" });
+
+    // ✅ whitelist des champs modifiables par l'utilisateur
+    const data = { ...req.body };
+
+    // champs autorisés
+    const allowed = [
+      "name",
+      "phone",
+      "profile_photo",
+      "facebook_url",
+      "instagram_url",
+      "tiktok_url",
+    ];
+
+    // on garde uniquement ce qui est autorisé
+    const safe = {};
+    for (const k of allowed) {
+      if (Object.prototype.hasOwnProperty.call(data, k)) safe[k] = data[k];
+    }
+
+    const updated = await User.update(userId, safe);
+    if (!updated) return res.status(400).json({ msg: "Aucun champ valide à mettre à jour" });
+
+    return res.json(updated);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ msg: "Erreur serveur" });
+  }
+}
+
+
 };
 
 module.exports = UserController;

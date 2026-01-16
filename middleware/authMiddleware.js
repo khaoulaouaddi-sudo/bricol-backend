@@ -5,7 +5,7 @@ const pool = require("../db");
 // Vérifie la présence et validité du JWT
 function auth(req, res, next) {
   const authHeader = req.headers["authorization"];
-  const token = authHeader && authHeader.split(" ")[1]; // Format: Bearer TOKEN
+  const token = authHeader && authHeader.split(" ")[1];
 
   if (!token) return res.status(401).json({ msg: "Token manquant" });
 
@@ -13,11 +13,32 @@ function auth(req, res, next) {
     if (err) return res.status(403).json({ msg: "Token invalide" });
 
     try {
-      const q = "SELECT id, name, email, role FROM users WHERE id = $1";
+      const q = `
+        SELECT id, name, email, role, is_active, suspended_at, token_version, email_verified_at
+        FROM users
+        WHERE id = $1
+      `;
       const { rows } = await pool.query(q, [decoded.id]);
       if (!rows[0]) return res.status(401).json({ msg: "Utilisateur non trouvé" });
 
-      req.user = rows[0]; // injecter user dans req
+      const user = rows[0];
+
+ // IMPORTANT: token_version check (invalidation sessions)
+      const tvToken = Number(decoded.token_version ?? 0);
+      const tvDb = Number(user.token_version ?? 0);
+      if (tvToken !== tvDb) {
+        return res.status(401).json({ msg: "Session révoquée, reconnectez-vous." });
+      }
+
+      // ✅ AJOUT : bloquer comptes désactivés / suspendus (centralisé)
+      if (user.is_active === false || user.suspended_at) {
+        return res.status(403).json({
+          msg: "Compte désactivé ou suspendu",
+          code: "ACCOUNT_SUSPENDED",
+        });
+      }
+
+      req.user = user;
       next();
     } catch (dbErr) {
       console.error(dbErr);
@@ -26,7 +47,6 @@ function auth(req, res, next) {
   });
 }
 
-// Vérifie si l’utilisateur a un rôle autorisé
 function checkRole(...roles) {
   return (req, res, next) => {
     if (!req.user) return res.status(401).json({ msg: "Non authentifié" });
@@ -36,6 +56,7 @@ function checkRole(...roles) {
     next();
   };
 }
+
 
 // Alias clair : seul admin peut gérer les Ads
 const ensureAdminAds = checkRole("admin");
@@ -115,39 +136,67 @@ async function ensureWorkerProfileOwner(req, res, next) {
 }
 
 // Vérifie qu’un worker supprime/ajoute une worker_photo de son propre profil
+// Vérifie qu’un worker ajoute ou supprime des photos de son propre worker_profile
 async function ensureWorkerPhotoOwner(req, res, next) {
   try {
     const userId = req.user?.id;
     const role = req.user?.role;
 
+    // ADMIN = bypass complet
     if (role === "admin") return next();
+    /* ------------------------------------------------
+     CAS 1 : opérations sur /worker-photos/:id (DELETE, PATCH)
+     ici req.params.id = ID PHOTO
+  -------------------------------------------------- */
+if ((req.method === "DELETE" || req.method === "PATCH") && req.route.path === "/:id") {
+  const photoId = req.params.id;
 
-    // DELETE /worker-photos/:id
-    if (req.params.id) {
-      const q = `
-        SELECT wp.user_id
-        FROM worker_photos p
-        JOIN worker_profiles wp ON wp.id = p.profile_id
-        WHERE p.id = $1
-      `;
-      const { rows } = await pool.query(q, [req.params.id]);
-      if (!rows[0]) return res.status(404).json({ msg: "Photo introuvable" });
-      if (rows[0].user_id !== userId) return res.status(403).json({ msg: "Non propriétaire de la photo" });
-      return next();
+  const q = `
+    SELECT wp.user_id
+    FROM worker_photos p
+    JOIN worker_profiles wp ON wp.id = p.profile_id
+    WHERE p.id = $1
+  `;
+  const { rows } = await pool.query(q, [photoId]);
+
+  if (!rows[0]) return res.status(404).json({ msg: "Photo introuvable" });
+  if (rows[0].user_id !== userId) {
+    return res.status(403).json({ msg: "Non propriétaire de la photo" });
+  }
+
+  return next();
+}
+
+    /* ------------------------------------------------
+       CAS 2 : POST /worker-profiles/:profileId/photos
+       Ici req.params.id = ID DU PROFIL
+    -------------------------------------------------- */
+
+    const profileId =
+      req.body.profile_id ||      // ancien format
+      req.params.profileId ||     // /profile/:profileId
+      req.params.id;              // /worker-profiles/:id/photos  <-- notre cas
+
+    if (!profileId) {
+      return res.status(400).json({ msg: "profile_id manquant" });
     }
 
-    // POST: body.profile_id
-    const { profile_id } = req.body;
-    if (!profile_id) return res.status(400).json({ msg: "profile_id requis" });
+    const q2 = `
+      SELECT user_id
+      FROM worker_profiles
+      WHERE id = $1
+    `;
+    const { rows } = await pool.query(q2, [profileId]);
 
-    const q2 = "SELECT user_id FROM worker_profiles WHERE id = $1";
-    const { rows } = await pool.query(q2, [profile_id]);
     if (!rows[0]) return res.status(404).json({ msg: "Profil introuvable" });
-    if (rows[0].user_id !== userId) return res.status(403).json({ msg: "Non propriétaire du profil" });
+    if (rows[0].user_id !== userId) {
+      return res.status(403).json({ msg: "Non propriétaire du profil" });
+    }
 
-    next();
+    return next();
+
   } catch (err) {
-    console.error(err);
+    console.error("ensureWorkerPhotoOwner error:", err);
     res.status(500).json({ msg: "Erreur serveur" });
   }
 }
@@ -251,6 +300,34 @@ async function ensureCompanySectorOwner(req, res, next) {
   }
 }
 
+// Vérifie que l'utilisateur courant est propriétaire du company_profile :companyId (admin bypass)
+async function ensureCompanyOwnerFromParam(req, res, next) {
+  try {
+    const role = req.user?.role;
+    if (role === "admin") return next();
+
+    const userId = req.user?.id;
+    const companyId = parseInt(req.params.companyId, 10);
+    if (!Number.isInteger(companyId)) {
+      return res.status(400).json({ msg: "companyId invalide" });
+    }
+
+    const { rows } = await pool.query(
+      `SELECT user_id FROM company_profiles WHERE id = $1`,
+      [companyId]
+    );
+    if (!rows[0]) return res.status(404).json({ msg: "Company introuvable" });
+    if (rows[0].user_id !== userId) {
+      return res.status(403).json({ msg: "Non propriétaire de ce company_profile" });
+    }
+
+    next();
+  } catch (err) {
+    console.error("ensureCompanyOwnerFromParam error:", err);
+    res.status(500).json({ msg: "Erreur serveur" });
+  }
+}
+
 module.exports = {
   auth,
   checkRole,
@@ -261,4 +338,5 @@ module.exports = {
   ensureCompanyProfileOwner,
   ensureCompanyPhotoOwner,
   ensureCompanySectorOwner,
+ ensureCompanyOwnerFromParam,
 };

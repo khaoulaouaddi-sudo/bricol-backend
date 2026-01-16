@@ -101,16 +101,90 @@ const UserModel = {
   },
 
   async getProfilesByUser(userId) {
-    const q = `SELECT * FROM worker_profiles WHERE user_id = $1 ORDER BY created_at DESC;`;
+    const q = `
+      WITH workers AS (
+        SELECT 
+          wp.id,
+          'worker'::text AS profile_type,
+          wp.created_at,
+          wp.title AS title_or_name,
+          jsonb_build_object(
+            'slug', c.slug,
+            'name_fr', c.name_fr
+          ) AS city,
+          jsonb_build_object(
+            'slug', s.slug,
+            'name', s.name
+          ) AS sector,
+          jsonb_build_object(
+            'slug', f.slug,
+            'name', f.name_fr
+          ) AS umbrella,
+          jsonb_build_object(
+            'verification_status', wp.verification_status,
+            'trust_badge', wp.trust_badge
+          ) AS badges
+        FROM worker_profiles wp
+        LEFT JOIN cities c   ON c.id = wp.city_id
+        LEFT JOIN sectors s  ON s.id = wp.sector_id
+        LEFT JOIN sector_families f ON f.id = s.umbrella_id
+        WHERE wp.user_id = $1
+      ),
+      companies AS (
+        SELECT
+          cp.id,
+          'company'::text AS profile_type,
+          cp.created_at,
+          cp.name AS title_or_name,
+          jsonb_build_object(
+            'slug', c.slug,
+            'name_fr', c.name_fr
+          ) AS city,
+          NULL::jsonb AS sector,
+          NULL::jsonb AS umbrella,
+          NULL::jsonb AS badges
+        FROM company_profiles cp
+        LEFT JOIN cities c ON c.id = cp.city_id
+        WHERE cp.user_id = $1
+      )
+      SELECT * FROM workers
+      UNION ALL
+      SELECT * FROM companies
+      ORDER BY created_at DESC, id DESC;
+    `;
     const { rows } = await pool.query(q, [userId]);
     return rows;
   },
+
 
   async getByEmail(email) {
     const q = `SELECT * FROM users WHERE email = $1 LIMIT 1`;
     const { rows } = await pool.query(q, [email]);
     return rows[0];
-  }
+  },
+async findByProvider({ provider, provider_user_id }) {
+  const q = `
+    SELECT u.*
+    FROM user_providers up
+    JOIN users u ON u.id = up.user_id
+    WHERE up.provider = $1 AND up.provider_user_id = $2
+    LIMIT 1;
+  `;
+  const { rows } = await pool.query(q, [provider, provider_user_id]);
+  return rows[0] || null;
+},
+
+async linkProvider({ user_id, provider, provider_user_id, email = null }) {
+  const q = `
+    INSERT INTO user_providers (user_id, provider, provider_user_id, email)
+    VALUES ($1,$2,$3,$4)
+    ON CONFLICT (provider, provider_user_id) DO UPDATE
+    SET email = EXCLUDED.email
+    RETURNING *;
+  `;
+  const { rows } = await pool.query(q, [user_id, provider, provider_user_id, email]);
+  return rows[0];
+}
 };
 
 module.exports = UserModel;
