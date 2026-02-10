@@ -9,11 +9,11 @@ const SectorController = require("../controllers/sectorController");
 // Liste plate des secteurs (filtrable par umbrella, labels adaptables par type)
 router.get("/", SectorController.listSectors);
 
+// (Optionnel) Liste des secteurs d'une umbrella donnée
+// IMPORTANT: cette route doit être AVANT "/:slug" sinon "/by-umbrella" est capturé comme un slug.
+router.get("/by-umbrella/:umbrellaSlug", SectorController.listSectorsByUmbrella);
+
 // Détail d'un secteur par slug
 router.get("/:slug", SectorController.getSectorBySlug);
-
-// (Optionnel) Liste des secteurs d'une umbrella donnée
-// Eviter conflit avec "/:slug" en plaçant cette route AVANT, ou utiliser un path plus spécifique.
-router.get("/by-umbrella/:umbrellaSlug", SectorController.listSectorsByUmbrella);
 
 module.exports = router;

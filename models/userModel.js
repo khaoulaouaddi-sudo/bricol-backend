@@ -184,7 +184,54 @@ async linkProvider({ user_id, provider, provider_user_id, email = null }) {
   `;
   const { rows } = await pool.query(q, [user_id, provider, provider_user_id, email]);
   return rows[0];
+},
+// ✅ AJOUT — identité (CIN) : lecture
+async getIdentityById(id) {
+  const q = `
+    SELECT
+      id,
+      cin,
+      cin_photo_url,
+      identity_status,
+      identity_verified,
+      identity_verified_at,
+      identity_reviewed_by,
+      identity_rejection_reason
+    FROM users
+    WHERE id = $1;
+  `;
+  const { rows } = await pool.query(q, [id]);
+  return rows[0] || null;
+},
+
+// ✅ AJOUT — identité (CIN) : soumission / resoumission (si pas approved)
+async submitIdentity(id, { cin, cin_photo_url }) {
+  const q = `
+    UPDATE users
+    SET
+      cin = $1,
+      cin_photo_url = $2,
+      identity_status = 'pending',
+      identity_verified = false,
+      identity_verified_at = NULL,
+      identity_reviewed_by = NULL,
+      identity_rejection_reason = NULL
+    WHERE id = $3
+    RETURNING
+      id,
+      cin,
+      cin_photo_url,
+      identity_status,
+      identity_verified,
+      identity_verified_at,
+      identity_reviewed_by,
+      identity_rejection_reason;
+  `;
+  const { rows } = await pool.query(q, [cin, cin_photo_url, id]);
+  return rows[0] || null;
 }
+
+
 };
 
 module.exports = UserModel;

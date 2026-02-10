@@ -1,6 +1,7 @@
 // controllers/companyProfileController.js
 const pool = require("../db");
 const CompanyProfile = require("../models/companyProfileModel");
+const { resolveLang } = require("../utils/i18n");
 
 // Utils de casting robustes
 function toInt(v) {
@@ -20,7 +21,8 @@ function toIntArray(arr) {
 const CompanyProfileController = {
   async getAll(req, res) {
     try {
-      const companies = await CompanyProfile.getAll();
+      const lang = resolveLang(req);
+      const companies = await CompanyProfile.getAll(lang);
       res.json(companies);
     } catch (err) {
       console.error(err);
@@ -28,16 +30,29 @@ const CompanyProfileController = {
     }
   },
 
-  async getById(req, res) {
-    try {
-      const company = await CompanyProfile.getById(req.params.id);
-      if (!company) return res.status(404).json({ msg: "Company not found" });
-      res.json(company);
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: "Erreur serveur" });
+  // controllers/companyProfileController.js
+async getById(req, res) {
+  try {
+    const id = toInt(req.params.id);
+    if (id === null) return res.status(400).json({ msg: "id invalide" });
+
+    const lang = resolveLang(req);
+
+    const profile = await CompanyProfile.getById(id, lang);
+    if (!profile) {
+      return res.status(404).json({ msg: "Profil introuvable" });
     }
-  },
+
+  const photos = await CompanyProfile.getPhotos(id);
+    profile.photos = photos;
+
+    return res.json(profile);
+  } catch (err) {
+    console.error("company getById error:", err);
+    return res.status(500).json({ msg: "Erreur serveur" });
+  }
+},
+
 
   // Création transactionnelle robuste
   async create(req, res) {
@@ -114,7 +129,8 @@ const CompanyProfileController = {
       await client.query("COMMIT");
 
       // 6) Relire la fiche complète (avec city + sectors) via le modèle
-      const full = await CompanyProfile.getById(created.id);
+      const lang = resolveLang(req);
+      const full = await CompanyProfile.getById(created.id, lang);
       return res.status(201).json(full);
     } catch (err) {
       try {
@@ -140,7 +156,9 @@ const CompanyProfileController = {
         return res
           .status(404)
           .json({ msg: "Company not found or no fields provided" });
-      res.json(updated);
+    const lang = resolveLang(req);
+    const full = await CompanyProfile.getById(Number(req.params.id), lang);
+    res.json(full || updated);
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: "Erreur serveur" });

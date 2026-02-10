@@ -12,6 +12,11 @@ router.get("/me", auth, ensureActiveUser, UC.getMe);
 router.patch("/me", auth, ensureActiveUser, UC.updateMe);
 router.get("/me/profiles", auth, ensureActiveUser, UC.getMyProfiles);
 
+// ✅ AJOUT: endpoints identité (CIN)
+router.get("/me/identity", auth, ensureActiveUser, UC.getMyIdentity);
+router.patch("/me/identity", auth, ensureActiveUser, UC.submitMyIdentity);
+
+
 
 // ===== Admin-only =====
 router.get("/", auth, checkRole("admin"), UC.getAll);

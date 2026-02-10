@@ -49,19 +49,26 @@ const ReviewController = {
   },
 
   // ✅ NEW: all reviews written by current user (for /history)
-  async getMine(req, res) {
-    try {
-      const reviewerId = req.user?.id;
-      const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
-      const offset = Math.max(Number(req.query.offset) || 0, 0);
+ 
+async getMine(req, res) {
+  try {
+    const reviewerId = req.user?.id;
+    const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
 
-      const items = await Review.getMineByReviewer(reviewerId, { limit, offset });
-      res.json({ items, meta: { limit, offset, count: items.length } });
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({ msg: "Erreur serveur" });
-    }
-  },
+    // lang depuis query ou header (sans hypothèse)
+    const qLang = String(req.query.lang || "").toLowerCase();
+    const hLang = String(req.headers["x-bricol-lang"] || "").toLowerCase();
+    const lang = qLang === "ar" || hLang === "ar" ? "ar" : "fr";
+
+    const items = await Review.getMineByReviewer(reviewerId, { limit, offset }, lang);
+    res.json({ items, meta: { limit, offset, count: items.length } });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: "Erreur serveur" });
+  }
+},
+
 
   async createForWorkerProfile(req, res, next) {
     try {

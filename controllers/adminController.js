@@ -1,5 +1,12 @@
 const pool = require("../db");
 const ReviewModel = require("../models/reviewModel");
+const User = require("../models/userModel");
+const WP = require("../models/workerProfileModel");
+
+function toInt(v) {
+  const n = Number.parseInt(v, 10);
+  return Number.isFinite(n) ? n : null;
+}
 
 async function audit(req, { action, target_user_id = null, target_type = null, target_id = null, metadata = null }) {
   await pool.query(
@@ -13,6 +20,13 @@ async function getUserRole(userId) {
   const { rows } = await pool.query(`SELECT role FROM users WHERE id=$1`, [userId]);
   return rows[0]?.role || null;
 }
+
+function normalizeStatus(v, fallback = "pending") {
+  const allowed = new Set(["not_submitted", "pending", "approved", "rejected"]);
+  const s = String(v || "").trim();
+  return allowed.has(s) ? s : fallback;
+}
+
 
 function parsePagination(req) {
   const page = Math.max(1, Number(req.query.page || 1));
@@ -321,6 +335,336 @@ const AdminController = {
       return res.status(500).json({ msg: "Erreur serveur" });
     }
   },
+
+  // =========================
+  // Identity (CIN) moderation
+  // =========================
+  async listIdentityRequests(req, res) {
+    try {
+      const { page, limit, offset } = parsePagination(req);
+      const status = normalizeStatus(req.query.status, "pending");
+      const q = (req.query.q || "").trim();
+
+      const where = ["identity_status = $1"];
+      const params = [status];
+      let i = 2;
+
+      if (q) {
+        where.push(`(LOWER(name) LIKE LOWER($${i}) OR LOWER(email) LIKE LOWER($${i}) OR LOWER(COALESCE(cin,'')) LIKE LOWER($${i}))`);
+        params.push(`%${q}%`);
+        i++;
+      }
+
+      const baseWhere = `WHERE ${where.join(" AND ")}`;
+
+      const totalR = await pool.query(`SELECT COUNT(*)::int AS c FROM users ${baseWhere}`, params);
+      const total = totalR.rows[0].c;
+
+      params.push(limit, offset);
+
+      const listR = await pool.query(
+        `SELECT
+           id, name, email,
+           cin, cin_photo_url,
+           identity_status, identity_verified, identity_verified_at,
+           identity_reviewed_by, identity_rejection_reason,
+           updated_at, created_at
+         FROM users
+         ${baseWhere}
+         ORDER BY updated_at DESC
+         LIMIT $${i} OFFSET $${i + 1}`,
+        params
+      );
+
+      return res.json({ items: listR.rows, meta: { page, limit, total } });
+    } catch (err) {
+      console.error("admin listIdentityRequests err:", err);
+      return res.status(500).json({ msg: "Erreur serveur" });
+    }
+  },
+
+  async approveUserIdentity(req, res) {
+    try {
+      const userId = Number(req.params.id);
+      if (!Number.isInteger(userId) || userId <= 0) {
+        return res.status(400).json({ msg: "id invalide" });
+      }
+
+      await pool.query("BEGIN");
+      try {
+        const cur = await pool.query(
+          `SELECT identity_status FROM users WHERE id=$1`,
+          [userId]
+        );
+        if (cur.rowCount === 0) {
+          await pool.query("ROLLBACK");
+          return res.status(404).json({ msg: "Utilisateur introuvable" });
+        }
+
+        // Option sécurité: n’approuver que pending
+        if (cur.rows[0].identity_status !== "pending") {
+          await pool.query("ROLLBACK");
+          return res.status(400).json({ msg: "Statut identité non 'pending'" });
+        }
+
+        const up = await pool.query(
+          `UPDATE users
+           SET identity_status='approved',
+               identity_verified=TRUE,
+               identity_verified_at=NOW(),
+               identity_reviewed_by=$2,
+               identity_rejection_reason=NULL,
+               updated_at=NOW()
+           WHERE id=$1
+           RETURNING id, cin, cin_photo_url, identity_status, identity_verified, identity_verified_at, identity_reviewed_by, identity_rejection_reason`,
+          [userId, req.user.id]
+        );
+
+        await audit(req, {
+          action: "APPROVE_IDENTITY",
+          target_user_id: userId,
+          target_type: "user_identity",
+          target_id: userId,
+        });
+
+        await pool.query("COMMIT");
+        return res.json(up.rows[0]);
+      } catch (e) {
+        await pool.query("ROLLBACK");
+        throw e;
+      }
+    } catch (err) {
+      console.error("admin approveUserIdentity err:", err);
+      return res.status(500).json({ msg: "Erreur serveur" });
+    }
+  },
+
+  async rejectUserIdentity(req, res) {
+    try {
+      const userId = Number(req.params.id);
+      if (!Number.isInteger(userId) || userId <= 0) {
+        return res.status(400).json({ msg: "id invalide" });
+      }
+
+      const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+      if (!reason) return res.status(400).json({ msg: "reason est requis" });
+
+      await pool.query("BEGIN");
+      try {
+        const cur = await pool.query(
+          `SELECT identity_status FROM users WHERE id=$1`,
+          [userId]
+        );
+        if (cur.rowCount === 0) {
+          await pool.query("ROLLBACK");
+          return res.status(404).json({ msg: "Utilisateur introuvable" });
+        }
+
+        if (cur.rows[0].identity_status !== "pending") {
+          await pool.query("ROLLBACK");
+          return res.status(400).json({ msg: "Statut identité non 'pending'" });
+        }
+
+        const up = await pool.query(
+          `UPDATE users
+           SET identity_status='rejected',
+               identity_verified=FALSE,
+               identity_verified_at=NULL,
+               identity_reviewed_by=$2,
+               identity_rejection_reason=$3,
+               updated_at=NOW()
+           WHERE id=$1
+           RETURNING id, cin, cin_photo_url, identity_status, identity_verified, identity_verified_at, identity_reviewed_by, identity_rejection_reason`,
+          [userId, req.user.id, reason]
+        );
+
+        await audit(req, {
+          action: "REJECT_IDENTITY",
+          target_user_id: userId,
+          target_type: "user_identity",
+          target_id: userId,
+          metadata: { reason },
+        });
+
+        await pool.query("COMMIT");
+        return res.json(up.rows[0]);
+      } catch (e) {
+        await pool.query("ROLLBACK");
+        throw e;
+      }
+    } catch (err) {
+      console.error("admin rejectUserIdentity err:", err);
+      return res.status(500).json({ msg: "Erreur serveur" });
+    }
+  },
+
+  // =========================
+  // Diploma moderation
+  // =========================
+  async listDiplomaRequests(req, res) {
+    try {
+      const { page, limit, offset } = parsePagination(req);
+      const status = normalizeStatus(req.query.status, "pending");
+      const q = (req.query.q || "").trim();
+
+      const where = ["wp.diploma_status = $1"];
+      const params = [status];
+      let i = 2;
+
+      if (q) {
+        where.push(`(LOWER(u.name) LIKE LOWER($${i}) OR LOWER(u.email) LIKE LOWER($${i}) OR LOWER(COALESCE(wp.title,'')) LIKE LOWER($${i}))`);
+        params.push(`%${q}%`);
+        i++;
+      }
+
+      const baseWhere = `WHERE ${where.join(" AND ")}`;
+
+      const totalR = await pool.query(
+        `SELECT COUNT(*)::int AS c
+         FROM worker_profiles wp
+         LEFT JOIN users u ON u.id = wp.user_id
+         ${baseWhere}`,
+        params
+      );
+      const total = totalR.rows[0].c;
+
+      params.push(limit, offset);
+
+      const listR = await pool.query(
+        `SELECT
+           wp.id, wp.user_id, wp.title,
+           wp.city_id, wp.sector_id,
+           wp.diploma_file_url, wp.diploma_status, wp.diploma_verified_at,
+           wp.diploma_reviewed_by, wp.diploma_rejection_reason,
+           wp.updated_at, wp.created_at,
+           u.name AS user_name, u.email AS user_email
+         FROM worker_profiles wp
+         LEFT JOIN users u ON u.id = wp.user_id
+         ${baseWhere}
+         ORDER BY wp.updated_at DESC
+         LIMIT $${i} OFFSET $${i + 1}`,
+        params
+      );
+
+      return res.json({ items: listR.rows, meta: { page, limit, total } });
+    } catch (err) {
+      console.error("admin listDiplomaRequests err:", err);
+      return res.status(500).json({ msg: "Erreur serveur" });
+    }
+  },
+
+  async approveWorkerDiploma(req, res) {
+    try {
+      const profileId = Number(req.params.id);
+      if (!Number.isInteger(profileId) || profileId <= 0) {
+        return res.status(400).json({ msg: "id invalide" });
+      }
+
+      await pool.query("BEGIN");
+      try {
+        const cur = await pool.query(
+          `SELECT diploma_status, user_id FROM worker_profiles WHERE id=$1`,
+          [profileId]
+        );
+        if (cur.rowCount === 0) {
+          await pool.query("ROLLBACK");
+          return res.status(404).json({ msg: "Profil introuvable" });
+        }
+
+        if (cur.rows[0].diploma_status !== "pending") {
+          await pool.query("ROLLBACK");
+          return res.status(400).json({ msg: "Statut diplôme non 'pending'" });
+        }
+
+        const up = await pool.query(
+          `UPDATE worker_profiles
+           SET diploma_status='approved',
+               diploma_verified_at=NOW(),
+               diploma_reviewed_by=$2,
+               diploma_rejection_reason=NULL,
+               updated_at=NOW()
+           WHERE id=$1
+           RETURNING id, user_id, diploma_file_url, diploma_status, diploma_verified_at, diploma_reviewed_by, diploma_rejection_reason`,
+          [profileId, req.user.id]
+        );
+
+        await audit(req, {
+          action: "APPROVE_DIPLOMA",
+          target_user_id: cur.rows[0].user_id,
+          target_type: "worker_diploma",
+          target_id: profileId,
+        });
+
+        await pool.query("COMMIT");
+        return res.json(up.rows[0]);
+      } catch (e) {
+        await pool.query("ROLLBACK");
+        throw e;
+      }
+    } catch (err) {
+      console.error("admin approveWorkerDiploma err:", err);
+      return res.status(500).json({ msg: "Erreur serveur" });
+    }
+  },
+
+  async rejectWorkerDiploma(req, res) {
+    try {
+      const profileId = Number(req.params.id);
+      if (!Number.isInteger(profileId) || profileId <= 0) {
+        return res.status(400).json({ msg: "id invalide" });
+      }
+
+      const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+      if (!reason) return res.status(400).json({ msg: "reason est requis" });
+
+      await pool.query("BEGIN");
+      try {
+        const cur = await pool.query(
+          `SELECT diploma_status, user_id FROM worker_profiles WHERE id=$1`,
+          [profileId]
+        );
+        if (cur.rowCount === 0) {
+          await pool.query("ROLLBACK");
+          return res.status(404).json({ msg: "Profil introuvable" });
+        }
+
+        if (cur.rows[0].diploma_status !== "pending") {
+          await pool.query("ROLLBACK");
+          return res.status(400).json({ msg: "Statut diplôme non 'pending'" });
+        }
+
+        const up = await pool.query(
+          `UPDATE worker_profiles
+           SET diploma_status='rejected',
+               diploma_verified_at=NULL,
+               diploma_reviewed_by=$2,
+               diploma_rejection_reason=$3,
+               updated_at=NOW()
+           WHERE id=$1
+           RETURNING id, user_id, diploma_file_url, diploma_status, diploma_verified_at, diploma_reviewed_by, diploma_rejection_reason`,
+          [profileId, req.user.id, reason]
+        );
+
+        await audit(req, {
+          action: "REJECT_DIPLOMA",
+          target_user_id: cur.rows[0].user_id,
+          target_type: "worker_diploma",
+          target_id: profileId,
+          metadata: { reason },
+        });
+
+        await pool.query("COMMIT");
+        return res.json(up.rows[0]);
+      } catch (e) {
+        await pool.query("ROLLBACK");
+        throw e;
+      }
+    } catch (err) {
+      console.error("admin rejectWorkerDiploma err:", err);
+      return res.status(500).json({ msg: "Erreur serveur" });
+    }
+  },
+
 
   async listAuditLogs(req, res) {
     try {

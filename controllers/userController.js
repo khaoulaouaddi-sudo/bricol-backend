@@ -159,6 +159,60 @@ async getMyProfiles(req, res) {
   }
 },
 
+// ✅ AJOUT — lire identité de l'utilisateur connecté
+async getMyIdentity(req, res) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ msg: "Non authentifié" });
+
+    const identity = await User.getIdentityById(userId);
+    if (!identity) return res.status(404).json({ msg: "Utilisateur introuvable" });
+
+    return res.json(identity);
+  } catch (err) {
+    console.error("GET /users/me/identity error:", err);
+    return res.status(500).json({ msg: "Erreur serveur" });
+  }
+},
+
+// ✅ AJOUT — soumettre CIN + photo CIN (URL Cloudinary)
+async submitMyIdentity(req, res) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ msg: "Non authentifié" });
+
+    let { cin, cin_photo_url } = req.body || {};
+
+    cin = typeof cin === "string" ? cin.trim() : "";
+    cin_photo_url = typeof cin_photo_url === "string" ? cin_photo_url.trim() : "";
+
+    // minimal & strict : on demande les 2 champs
+    if (!cin || !cin_photo_url) {
+      return res.status(400).json({ msg: "cin et cin_photo_url sont requis" });
+    }
+
+    // validation URL basique (Cloudinary upload côté front)
+    if (!/^https?:\/\/.+/i.test(cin_photo_url)) {
+      return res.status(400).json({ msg: "cin_photo_url doit être une URL http(s)" });
+    }
+
+    // règle de blocage après approved
+    const current = await User.getIdentityById(userId);
+    if (!current) return res.status(404).json({ msg: "Utilisateur introuvable" });
+
+    if (current.identity_status === "approved") {
+      return res.status(403).json({ msg: "Identité déjà vérifiée : modification interdite" });
+    }
+
+    const updated = await User.submitIdentity(userId, { cin, cin_photo_url });
+    return res.json(updated);
+  } catch (err) {
+    console.error("PATCH /users/me/identity error:", err);
+    return res.status(500).json({ msg: "Erreur serveur" });
+  }
+},
+
+
 async updateMe(req, res) {
   try {
     const userId = req.user?.id;

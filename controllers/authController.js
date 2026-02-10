@@ -200,7 +200,7 @@ function assertNotSuspended(user) {
 function verificationEmailHtml({ name, verifyUrl }) {
   return `
     <div style="font-family:Arial,sans-serif;line-height:1.5">
-      <h2>Bienvenue ${name || ""} sur Bricol</h2>
+      <h2>Bienvenue ${name || ""} sur Bricola</h2>
       <p>Confirme ton email en cliquant ici :</p>
       <p><a href="${verifyUrl}">Confirmer mon email</a></p>
       <p>Si tu n'es pas à l'origine de cette demande, ignore cet email.</p>
@@ -271,7 +271,7 @@ async function register(req, res) {
       try {
         const info = await sendMail({
           to: email,
-          subject: "Bricol - Confirme ton email",
+          subject: "Bricola - Confirme ton email",
           html: verificationEmailHtml({ name, verifyUrl }),
         });
 
@@ -478,7 +478,7 @@ async function forgotPassword(req, res) {
     try {
       const info = await sendMail({
         to: u.email,
-        subject: "Bricol - Réinitialisation du mot de passe",
+        subject: "Bricola - Réinitialisation du mot de passe",
         html: resetEmailHtml({ resetUrl }),
       });
 

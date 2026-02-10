@@ -1,6 +1,7 @@
 // controllers/workerProfileController.js
 const pool = require("../db");
 const WP = require("../models/workerProfileModel");
+const { resolveLang } = require("../utils/i18n");
 
 
 // helpers de cast robustes
@@ -13,7 +14,8 @@ const WorkerProfileController = {
   // Liste (pas de param id !)
   async getAll(req, res) {
     try {
-      const rows = await WP.getAll();
+      const lang = resolveLang(req);
+      const rows = await WP.getAll(lang);
       res.json(rows);
     } catch (err) {
       console.error(err);
@@ -21,12 +23,17 @@ const WorkerProfileController = {
     }
   },
 
-  async getById(req, res) {
-    try {
-      const id = toInt(req.params.id);
-      if (id === null) return res.status(400).json({ msg: "id invalide" });
-     // 1) Récupérer profil
-    const profile = await WP.getById(id);
+  // controllers/workerProfileController.js
+async getById(req, res) {
+  try {
+    const id = toInt(req.params.id);
+    if (id === null) return res.status(400).json({ msg: "id invalide" });
+
+    // ✅ Lire la langue depuis la query (compat avec ton front qui envoie ?lang=ar)
+     const lang = resolveLang(req);
+
+    // 1) Récupérer profil (localisé)
+    const profile = await WP.getById(id, lang);
     if (!profile) {
       return res.status(404).json({ msg: "Profil introuvable" });
     }
@@ -40,6 +47,58 @@ const WorkerProfileController = {
     return res.json(profile);
   } catch (err) {
     console.error("getById error:", err);
+    return res.status(500).json({ msg: "Erreur serveur" });
+  }
+},
+
+
+// ✅ AJOUT — lecture privée du profil (inclut champs diplôme)
+async getPrivateById(req, res) {
+  try {
+    const id = toInt(req.params.id);
+    if (id === null) return res.status(400).json({ msg: "id invalide" });
+
+    const profile = await WP.getByIdPrivate(id);
+    if (!profile) return res.status(404).json({ msg: "Profil introuvable" });
+
+    const photos = await WP.getPhotos(id);
+    profile.photos = photos;
+
+    return res.json(profile);
+  } catch (err) {
+    console.error("getPrivateById error:", err);
+    return res.status(500).json({ msg: "Erreur serveur" });
+  }
+},
+
+// ✅ AJOUT — soumettre un diplôme (URL Cloudinary PDF)
+async submitDiploma(req, res) {
+  try {
+    const id = toInt(req.params.id);
+    if (id === null) return res.status(400).json({ msg: "id invalide" });
+
+    let { diploma_file_url } = req.body || {};
+    diploma_file_url = typeof diploma_file_url === "string" ? diploma_file_url.trim() : "";
+
+    if (!diploma_file_url) {
+      return res.status(400).json({ msg: "diploma_file_url est requis" });
+    }
+    if (!/^https?:\/\/.+/i.test(diploma_file_url)) {
+      return res.status(400).json({ msg: "diploma_file_url doit être une URL http(s)" });
+    }
+
+    const current = await WP.getDiplomaMeta(id);
+    if (!current) return res.status(404).json({ msg: "Profil introuvable" });
+
+    // Blocage après approval (sauf admin — ici admin passe aussi, mais on bloque quand même par règle produit)
+    if (current.diploma_status === "approved") {
+      return res.status(403).json({ msg: "Diplôme déjà vérifié : modification interdite" });
+    }
+
+    const updated = await WP.submitDiploma(id, diploma_file_url);
+    return res.json(updated);
+  } catch (err) {
+    console.error("submitDiploma error:", err);
     return res.status(500).json({ msg: "Erreur serveur" });
   }
 },
@@ -100,7 +159,8 @@ const WorkerProfileController = {
       await client.query("COMMIT");
 
       // renvoyer la fiche enrichie
-      const full = await WP.getById(createdId);
+      const lang = resolveLang(req);
+      const full = await WP.getById(createdId, lang);
       return res.status(201).json(full);
     } catch (err) {
       try { await client.query("ROLLBACK"); } catch (_) {}

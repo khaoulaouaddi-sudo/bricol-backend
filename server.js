@@ -22,18 +22,19 @@ const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || "http://localhost:3000")
   .map(s => s.trim())
   .filter(Boolean);
 
-app.use(
-  cors({
-    origin(origin, cb) {
-      // Autorise Postman/cURL (origin null) + allowlist
-      if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
-      return cb(new Error("Not allowed by CORS"));
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  })
-);
+const corsOptions = {
+  origin(origin, cb) {
+    // Autorise Postman/cURL (origin null) + allowlist
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    return cb(new Error("Not allowed by CORS"));
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "x-bricol-lang", "X-Bricol-Lang"],
+};
+
+app.use(cors(corsOptions));
+app.options(/.*/, cors(corsOptions));
 
 /* 3) Rate limits ciblés */
 const windowMs = parseInt(process.env.RATE_LIMIT_WINDOW_MS || "900000", 10);

@@ -50,76 +50,83 @@ const ReviewModel = {
     return rows[0] || null;
   },
 
-  // ✅ NEW: list all reviews written by a reviewer (for /history)
-  async getMineByReviewer(reviewerId, { limit = 50, offset = 0 } = {}) {
-    const q = `
-      (
-        SELECT
-          r.id,
-          r.rating,
-          r.comment,
-          r.created_at,
-          r.updated_at,
-          'worker'::text AS target_type,
-          r.target_worker_profile_id AS target_profile_id,
-          u2.name AS target_name,
-          s.name AS sector_name,
-          s.slug AS sector_slug,
-          ph.image_url AS cover_url
-        FROM reviews r
-        JOIN worker_profiles wp ON wp.id = r.target_worker_profile_id
-        LEFT JOIN users u2 ON u2.id = wp.user_id
-        LEFT JOIN sectors s ON s.id = wp.sector_id
-        LEFT JOIN LATERAL (
-          SELECT p.image_url
-          FROM worker_photos p
-          WHERE p.profile_id = wp.id
-          ORDER BY p.is_cover DESC, p.created_at DESC, p.id DESC
-          LIMIT 1
-        ) ph ON true
-        WHERE r.reviewer_id = $1
-          AND r.target_worker_profile_id IS NOT NULL
-      )
-      UNION ALL
-      (
-        SELECT
-          r.id,
-          r.rating,
-          r.comment,
-          r.created_at,
-          r.updated_at,
-          'company'::text AS target_type,
-          r.target_company_profile_id AS target_profile_id,
-          cp.name AS target_name,
-          s.name AS sector_name,
-          s.slug AS sector_slug,
-          ph.image_url AS cover_url
-        FROM reviews r
-        JOIN company_profiles cp ON cp.id = r.target_company_profile_id
-        LEFT JOIN LATERAL (
-          SELECT s2.*
-          FROM company_sectors cs
-          JOIN sectors s2 ON s2.id = cs.sector_id
-          WHERE cs.company_id = cp.id
-          ORDER BY s2.id ASC
-          LIMIT 1
-        ) s ON true
-        LEFT JOIN LATERAL (
-          SELECT p.image_url
-          FROM company_photos p
-          WHERE p.company_id = cp.id
-          ORDER BY p.is_cover DESC, p.created_at DESC, p.id DESC
-          LIMIT 1
-        ) ph ON true
-        WHERE r.reviewer_id = $1
-          AND r.target_company_profile_id IS NOT NULL
-      )
-      ORDER BY updated_at DESC NULLS LAST, created_at DESC, id DESC
-      LIMIT $2 OFFSET $3;
-    `;
-    const { rows } = await pool.query(q, [reviewerId, limit, offset]);
-    return rows;
-  },
+
+  // ✅ list all reviews written by a reviewer (for /history) + sector label localized
+async getMineByReviewer(reviewerId, { limit = 50, offset = 0 } = {}, lang = "fr") {
+  const q = `
+    (
+      SELECT
+        r.id,
+        r.rating,
+        r.comment,
+        r.created_at,
+        r.updated_at,
+        'worker'::text AS target_type,
+        r.target_worker_profile_id AS target_profile_id,
+        u2.name AS target_name,
+        CASE
+          WHEN $4 = 'ar' THEN COALESCE(s.worker_label_ar, s.name_ar, s.name)
+          ELSE COALESCE(s.worker_label_fr, s.name)
+        END AS sector_name,
+        s.slug AS sector_slug,
+        ph.image_url AS cover_url
+      FROM reviews r
+      JOIN worker_profiles wp ON wp.id = r.target_worker_profile_id
+      LEFT JOIN users u2 ON u2.id = wp.user_id
+      LEFT JOIN sectors s ON s.id = wp.sector_id
+      LEFT JOIN LATERAL (
+        SELECT p.image_url
+        FROM worker_photos p
+        WHERE p.profile_id = wp.id
+        ORDER BY p.is_cover DESC, p.created_at DESC, p.id DESC
+        LIMIT 1
+      ) ph ON true
+      WHERE r.reviewer_id = $1
+        AND r.target_worker_profile_id IS NOT NULL
+    )
+    UNION ALL
+    (
+      SELECT
+        r.id,
+        r.rating,
+        r.comment,
+        r.created_at,
+        r.updated_at,
+        'company'::text AS target_type,
+        r.target_company_profile_id AS target_profile_id,
+        cp.name AS target_name,
+        CASE
+          WHEN $4 = 'ar' THEN COALESCE(s.company_label_ar, s.name_ar, s.name)
+          ELSE COALESCE(s.company_label_fr, s.name)
+        END AS sector_name,
+        s.slug AS sector_slug,
+        ph.image_url AS cover_url
+      FROM reviews r
+      JOIN company_profiles cp ON cp.id = r.target_company_profile_id
+      LEFT JOIN LATERAL (
+        SELECT s2.*
+        FROM company_sectors cs
+        JOIN sectors s2 ON s2.id = cs.sector_id
+        WHERE cs.company_id = cp.id
+        ORDER BY s2.id ASC
+        LIMIT 1
+      ) s ON true
+      LEFT JOIN LATERAL (
+        SELECT p.image_url
+        FROM company_photos p
+        WHERE p.company_id = cp.id
+        ORDER BY p.is_cover DESC, p.created_at DESC, p.id DESC
+        LIMIT 1
+      ) ph ON true
+      WHERE r.reviewer_id = $1
+        AND r.target_company_profile_id IS NOT NULL
+    )
+    ORDER BY updated_at DESC NULLS LAST, created_at DESC, id DESC
+    LIMIT $2 OFFSET $3;
+  `;
+  const { rows } = await pool.query(q, [reviewerId, limit, offset, lang]);
+  return rows;
+},
 
   async createForWorkerProfile({ reviewer_id, target_worker_profile_id, rating, comment }) {
     const q = `

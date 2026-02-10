@@ -48,16 +48,29 @@ async function search({ city, sector, umbrella, type, page = 1, limit = 20 }) {
 
   const cityBind = cityId !== null ? bind("city", cityId) : null;
   const sectorBind = sectorId !== null ? bind("sector", sectorId) : null;
-  const umbrellaBind = (!sectorId && umbrellaId !== null) ? bind("umbrella", umbrellaId) : null;
+  const umbrellaBind =
+    !sectorId && umbrellaId !== null ? bind("umbrella", umbrellaId) : null;
 
   const whereWorker = `
     ${cityBind ? `AND wp.city_id = ${cityBind}` : ``}
-    ${sectorBind ? `AND s.id = ${sectorBind}` : (umbrellaBind ? `AND s.umbrella_id = ${umbrellaBind}` : ``)}
+    ${
+      sectorBind
+        ? `AND s.id = ${sectorBind}`
+        : umbrellaBind
+        ? `AND s.umbrella_id = ${umbrellaBind}`
+        : ``
+    }
   `;
 
   const whereCompany = `
     ${cityBind ? `AND cp.city_id = ${cityBind}` : ``}
-    ${sectorBind ? `AND s.id = ${sectorBind}` : (umbrellaBind ? `AND s.umbrella_id = ${umbrellaBind}` : ``)}
+    ${
+      sectorBind
+        ? `AND s.id = ${sectorBind}`
+        : umbrellaBind
+        ? `AND s.umbrella_id = ${umbrellaBind}`
+        : ``
+    }
   `;
 
   const limitNum = Math.min(Math.max(Number(limit) || 20, 1), 50);
@@ -69,9 +82,23 @@ async function search({ city, sector, umbrella, type, page = 1, limit = 20 }) {
       'worker' AS profile_type,
       wp.id     AS profile_id,
       wp.title  AS title_or_name,
-      c.id      AS city_id, c.slug AS city_slug, c.name_fr AS city_name,
-      s.id      AS sector_id, s.slug AS sector_slug, s.name AS sector_name,
-      sf.slug   AS umbrella_slug, sf.name_fr AS umbrella_name,
+
+      c.id      AS city_id,
+      c.slug    AS city_slug,
+      c.name_fr AS city_name,
+      c.name_ar AS city_name_ar,
+
+      s.id      AS sector_id,
+      s.slug    AS sector_slug,
+      s.name    AS sector_name,
+      s.name_ar AS sector_name_ar,
+      COALESCE(s.worker_label_fr, s.name) AS sector_label_fr,
+      COALESCE(s.worker_label_ar, s.name_ar, s.name) AS sector_label_ar,
+
+      sf.slug   AS umbrella_slug,
+      sf.name_fr AS umbrella_name,
+      sf.name_ar AS umbrella_name_ar,
+
       wp.verification_status, wp.trust_badge,
       wp.created_at,
 
@@ -114,9 +141,23 @@ async function search({ city, sector, umbrella, type, page = 1, limit = 20 }) {
       'company' AS profile_type,
       cp.id     AS profile_id,
       cp.name   AS title_or_name,
-      c.id      AS city_id, c.slug AS city_slug, c.name_fr AS city_name,
-      s.id      AS sector_id, s.slug AS sector_slug, s.name AS sector_name,
-      sf.slug   AS umbrella_slug, sf.name_fr AS umbrella_name,
+
+      c.id      AS city_id,
+      c.slug    AS city_slug,
+      c.name_fr AS city_name,
+      c.name_ar AS city_name_ar,
+
+      s.id      AS sector_id,
+      s.slug    AS sector_slug,
+      s.name    AS sector_name,
+      s.name_ar AS sector_name_ar,
+      COALESCE(s.company_label_fr, s.name) AS sector_label_fr,
+      COALESCE(s.company_label_ar, s.name_ar, s.name) AS sector_label_ar,
+
+      sf.slug   AS umbrella_slug,
+      sf.name_fr AS umbrella_name,
+      sf.name_ar AS umbrella_name_ar,
+
       NULL::text AS verification_status, NULL::bool AS trust_badge,
       cp.created_at,
 
@@ -194,15 +235,37 @@ async function search({ city, sector, umbrella, type, page = 1, limit = 20 }) {
     profile_type: r.profile_type,
     profile_id: r.profile_id,
     title_or_name: r.title_or_name,
-    city: { id: r.city_id, slug: r.city_slug, name_fr: r.city_name },
-    sector: { id: r.sector_id, slug: r.sector_slug, name: r.sector_name },
+
+    city: {
+      id: r.city_id,
+      slug: r.city_slug,
+      name_fr: r.city_name,        // existant
+      name_ar: r.city_name_ar,     // nouveau
+    },
+
+    sector: {
+      id: r.sector_id,
+      slug: r.sector_slug,
+      name: r.sector_name,         // existant
+      name_ar: r.sector_name_ar,   // nouveau
+    },
+
     umbrella: r.umbrella_slug
-      ? { slug: r.umbrella_slug, name: r.umbrella_name }
+      ? {
+          slug: r.umbrella_slug,
+          name: r.umbrella_name,       // existant
+          name_ar: r.umbrella_name_ar, // nouveau
+        }
       : null,
+
     badges:
       r.profile_type === "worker"
-        ? { verification_status: r.verification_status, trust_badge: r.trust_badge }
+        ? {
+            verification_status: r.verification_status,
+            trust_badge: r.trust_badge,
+          }
         : null,
+
     cover_url: r.cover_url ?? null,
     reviews_avg: r.reviews_avg === null ? null : Number(r.reviews_avg),
     reviews_count: Number(r.reviews_count ?? 0),
@@ -235,6 +298,9 @@ async function selectedProfiles({ limit = 12 } = {}) {
       u.name   AS display_name,
       s.slug   AS sector_slug,
       s.name   AS sector_name,
+      s.name_ar AS sector_name_ar,
+      COALESCE(s.worker_label_fr, s.name) AS sector_label_fr,
+      COALESCE(s.worker_label_ar, s.name_ar, s.name) AS sector_label_ar,
       wp.created_at,
       ph.image_url AS cover_url,
       rv.reviews_avg,
@@ -267,6 +333,9 @@ async function selectedProfiles({ limit = 12 } = {}) {
       cp.name   AS display_name,
       s.slug    AS sector_slug,
       s.name    AS sector_name,
+      s.name_ar AS sector_name_ar,
+      COALESCE(s.company_label_fr, s.name) AS sector_label_fr,
+      COALESCE(s.company_label_ar, s.name_ar, s.name) AS sector_label_ar,
       cp.created_at,
       ph.image_url AS cover_url,
       rv.reviews_avg,
@@ -327,7 +396,13 @@ async function selectedProfiles({ limit = 12 } = {}) {
     display_name: r.display_name ?? null,
     sector:
       r.sector_slug || r.sector_name
-        ? { slug: r.sector_slug ?? null, name: r.sector_name ?? null }
+        ? {
+            slug: r.sector_slug ?? null,
+            name: r.sector_name ?? null,
+            name_ar: r.sector_name_ar ?? null,
+            label: r.sector_label_fr ?? null,
+            label_ar: r.sector_label_ar ?? null,
+          }
         : null,
     cover_url: r.cover_url ?? null,
     reviews_avg: r.reviews_avg === null ? null : Number(r.reviews_avg),
