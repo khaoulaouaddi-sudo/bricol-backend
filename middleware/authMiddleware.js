@@ -10,7 +10,7 @@ function auth(req, res, next) {
   if (!token) return res.status(401).json({ msg: "Token manquant" });
 
   jwt.verify(token, process.env.JWT_SECRET, async (err, decoded) => {
-    if (err) return res.status(403).json({ msg: "Token invalide" });
+    if (err) return res.status(401).json({ msg: "Token invalide" });
 
     try {
       const q = `

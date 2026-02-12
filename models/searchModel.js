@@ -66,9 +66,21 @@ async function search({ city, sector, umbrella, type, page = 1, limit = 20 }) {
     ${cityBind ? `AND cp.city_id = ${cityBind}` : ``}
     ${
       sectorBind
-        ? `AND s.id = ${sectorBind}`
+        ? `AND EXISTS (
+            SELECT 1
+            FROM public.company_sectors cs2
+            JOIN public.sectors s2 ON s2.id = cs2.sector_id
+            WHERE cs2.company_id = cp.id
+              AND s2.id = ${sectorBind}
+          )`
         : umbrellaBind
-        ? `AND s.umbrella_id = ${umbrellaBind}`
+        ? `AND EXISTS (
+            SELECT 1
+            FROM public.company_sectors cs2
+            JOIN public.sectors s2 ON s2.id = cs2.sector_id
+            WHERE cs2.company_id = cp.id
+              AND s2.umbrella_id = ${umbrellaBind}
+          )`
         : ``
     }
   `;
@@ -98,6 +110,9 @@ async function search({ city, sector, umbrella, type, page = 1, limit = 20 }) {
       sf.slug   AS umbrella_slug,
       sf.name_fr AS umbrella_name,
       sf.name_ar AS umbrella_name_ar,
+
+      -- ✅ FIX UNION: sqlCompany a "sectors" => sqlWorker doit aussi l'avoir (même position/type)
+      NULL::jsonb AS sectors,
 
       wp.verification_status, wp.trust_badge,
       wp.created_at,
@@ -147,16 +162,20 @@ async function search({ city, sector, umbrella, type, page = 1, limit = 20 }) {
       c.name_fr AS city_name,
       c.name_ar AS city_name_ar,
 
-      s.id      AS sector_id,
-      s.slug    AS sector_slug,
-      s.name    AS sector_name,
-      s.name_ar AS sector_name_ar,
-      COALESCE(s.company_label_fr, s.name) AS sector_label_fr,
-      COALESCE(s.company_label_ar, s.name_ar, s.name) AS sector_label_ar,
+      -- ✅ Secteur "principal" (1 seul) pour compat avec le front actuel
+      s1.sector_id,
+      s1.sector_slug,
+      s1.sector_name,
+      s1.sector_name_ar,
+      s1.sector_label_fr,
+      s1.sector_label_ar,
 
-      sf.slug   AS umbrella_slug,
-      sf.name_fr AS umbrella_name,
-      sf.name_ar AS umbrella_name_ar,
+      s1.umbrella_slug,
+      s1.umbrella_name,
+      s1.umbrella_name_ar,
+
+      -- ✅ Tous les secteurs de l'entreprise (liste)
+      COALESCE(sectors_agg.sectors, '[]'::jsonb) AS sectors,
 
       NULL::text AS verification_status, NULL::bool AS trust_badge,
       cp.created_at,
@@ -167,10 +186,42 @@ async function search({ city, sector, umbrella, type, page = 1, limit = 20 }) {
       rv.reviews_count
 
     FROM public.company_profiles cp
-    JOIN public.company_sectors cs ON cs.company_id = cp.id
-    JOIN public.sectors s ON s.id = cs.sector_id
-    LEFT JOIN public.sector_families sf ON sf.id = s.umbrella_id
     JOIN public.cities c ON c.id = cp.city_id
+
+    -- ✅ Tous les secteurs agrégés (pas de doublons)
+    LEFT JOIN LATERAL (
+      SELECT jsonb_agg(DISTINCT jsonb_build_object(
+        'id', s.id,
+        'slug', s.slug,
+        'name', s.name,
+        'name_ar', s.name_ar,
+        'label_fr', COALESCE(s.company_label_fr, s.name),
+        'label_ar', COALESCE(s.company_label_ar, s.name_ar, s.name)
+      )) AS sectors
+      FROM public.company_sectors cs
+      JOIN public.sectors s ON s.id = cs.sector_id
+      WHERE cs.company_id = cp.id
+    ) sectors_agg ON true
+
+    -- ✅ Un secteur principal (le premier) + umbrella
+    LEFT JOIN LATERAL (
+      SELECT
+        s.id      AS sector_id,
+        s.slug    AS sector_slug,
+        s.name    AS sector_name,
+        s.name_ar AS sector_name_ar,
+        COALESCE(s.company_label_fr, s.name) AS sector_label_fr,
+        COALESCE(s.company_label_ar, s.name_ar, s.name) AS sector_label_ar,
+        sf.slug   AS umbrella_slug,
+        sf.name_fr AS umbrella_name,
+        sf.name_ar AS umbrella_name_ar
+      FROM public.company_sectors cs
+      JOIN public.sectors s ON s.id = cs.sector_id
+      LEFT JOIN public.sector_families sf ON sf.id = s.umbrella_id
+      WHERE cs.company_id = cp.id
+      ORDER BY cs.id ASC
+      LIMIT 1
+    ) s1 ON true
 
     -- Photo à afficher : cover si existe, sinon la plus récente
     LEFT JOIN LATERAL (
@@ -239,21 +290,23 @@ async function search({ city, sector, umbrella, type, page = 1, limit = 20 }) {
     city: {
       id: r.city_id,
       slug: r.city_slug,
-      name_fr: r.city_name,        // existant
-      name_ar: r.city_name_ar,     // nouveau
+      name_fr: r.city_name, // existant
+      name_ar: r.city_name_ar, // nouveau
     },
 
     sector: {
       id: r.sector_id,
       slug: r.sector_slug,
-      name: r.sector_name,         // existant
-      name_ar: r.sector_name_ar,   // nouveau
+      name: r.sector_name, // existant
+      name_ar: r.sector_name_ar, // nouveau
     },
+
+    sectors: r.profile_type === "company" ? (r.sectors ?? []) : undefined,
 
     umbrella: r.umbrella_slug
       ? {
           slug: r.umbrella_slug,
-          name: r.umbrella_name,       // existant
+          name: r.umbrella_name, // existant
           name_ar: r.umbrella_name_ar, // nouveau
         }
       : null,
@@ -331,18 +384,32 @@ async function selectedProfiles({ limit = 12 } = {}) {
       'company' AS profile_type,
       cp.id     AS profile_id,
       cp.name   AS display_name,
-      s.slug    AS sector_slug,
-      s.name    AS sector_name,
-      s.name_ar AS sector_name_ar,
-      COALESCE(s.company_label_fr, s.name) AS sector_label_fr,
-      COALESCE(s.company_label_ar, s.name_ar, s.name) AS sector_label_ar,
+      s1.sector_slug,
+      s1.sector_name,
+      s1.sector_name_ar,
+      s1.sector_label_fr,
+      s1.sector_label_ar,
       cp.created_at,
       ph.image_url AS cover_url,
       rv.reviews_avg,
       rv.reviews_count
     FROM public.company_profiles cp
-    JOIN public.company_sectors cs ON cs.company_id = cp.id
-    JOIN public.sectors s ON s.id = cs.sector_id
+
+    -- ✅ FIX: un seul secteur par company (sinon duplication via JOIN company_sectors)
+    LEFT JOIN LATERAL (
+      SELECT
+        s.slug AS sector_slug,
+        s.name AS sector_name,
+        s.name_ar AS sector_name_ar,
+        COALESCE(s.company_label_fr, s.name) AS sector_label_fr,
+        COALESCE(s.company_label_ar, s.name_ar, s.name) AS sector_label_ar
+      FROM public.company_sectors cs
+      JOIN public.sectors s ON s.id = cs.sector_id
+      WHERE cs.company_id = cp.id
+      ORDER BY cs.id ASC
+      LIMIT 1
+    ) s1 ON true
+
     LEFT JOIN LATERAL (
       SELECT p.image_url
       FROM public.company_photos p
@@ -350,6 +417,7 @@ async function selectedProfiles({ limit = 12 } = {}) {
       ORDER BY p.is_cover DESC, p.created_at DESC, p.id DESC
       LIMIT 1
     ) ph ON true
+
     LEFT JOIN LATERAL (
       SELECT
         CASE WHEN COUNT(*) = 0 THEN NULL

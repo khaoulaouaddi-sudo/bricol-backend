@@ -12,7 +12,12 @@ const app = express();
 app.set("trust proxy", 1);
 
 /* 1) Sécurité & parsers */
-app.use(helmet({ crossOriginResourcePolicy: false }));
+app.use(
+  helmet({
+    crossOriginResourcePolicy: false,
+    crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
+  })
+);
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
 
