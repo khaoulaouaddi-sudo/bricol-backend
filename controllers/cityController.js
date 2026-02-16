@@ -6,7 +6,7 @@ const { resolveLang, pickLang } = require("../utils/i18n");
 async function listCities(req, res) {
   try {
     const q = (req.query.q || "").trim();
-    const limit = req.query.limit || 20;
+    const limit = req.query.limit || 100;
 
     const lang = resolveLang(req);
 
